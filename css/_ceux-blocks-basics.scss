@@ -80,7 +80,7 @@
         min-height: 50px;
         border: 2px dashed lighten($blue,10%);
     }
-    .ui-sortable-helper{
+    > .ui-sortable-helper{
         border: 2px dashed $light;
         background: $white;
         @include opacity(90);
@@ -95,6 +95,12 @@
 		 font-size: 30px;
 		 width: 30px;
 	 }
+}
+
+#post-placeholder{
+    padding: 50px;
+    text-align: center;
+    h1 {color: $gray; }
 }
 
 #wp-blocks{

@@ -21,7 +21,7 @@ class WP_Content_Blocks {
 	public $name = '';
 	
 	protected static $instance = null;
-	protected $plugin_slug = 'wp-content-blocks-v2';
+	protected $plugin_slug = 'wp-content-blocks';
 	protected $plugin_dir = null;
 
 	// get instance of plugin
@@ -53,6 +53,7 @@ class WP_Content_Blocks {
 		// returns the content-blocks collection via ajax
 		add_action( 'wp_ajax_get_content_blocks', array( $this, 'get_content_blocks_coll') );
 		add_action( 'wp_ajax_get_cb_button_tpl', array( $this, 'blocks_button_tpl') );
+		add_action( 'wp_ajax_ceux_upload_image', array( $this, 'cb_upload_image') );
 
 	}
 
@@ -152,6 +153,20 @@ class WP_Content_Blocks {
 			'icon' => 'dashicons-format-gallery',
 			'view' => 'galleryView',
 		), 'cb_gallery_tpl', true );
+
+		// additional view for gallery content block
+		$wp_content_blocks_tpl[] = array( 
+			'slug' => 'gallery-placeholder', 
+			'callback' => 'cb_gallery_placeholder_tpl', 
+			'is_main' => false 
+		);
+
+		// additional subview for gallery content block
+		$wp_content_blocks_tpl[] = array( 
+			'slug' => 'gallery-img-tpl', 
+			'callback' => 'cb_gallery_img_tpl', 
+			'is_main' => false 
+		);
 
 		// Audio
 		register_content_block( array(
@@ -260,7 +275,12 @@ class WP_Content_Blocks {
 		<div id="wp-editor-toolbar"></div>
 		<div id="wp-content-wrap" class="wp-core-ui wp-editor-wrap">
 			<div id="wp-content-editor-container" class="wp-editor-container">
-				<div id="content-blocks"></div>
+				<div id="content-blocks">
+					<div id="post-placeholder">
+						<h1><?php _e( 'Insert Content' ) ?></h1>
+						<p><?php _e( 'Click "Add Content Block" and select a Content Block to start editing your post.' ) ?></p>
+					</div>
+				</div>
 				<textarea class="wp-editor-area" style="display:none;" cols="40" name="content" id="content"><?php echo get_post_field( 'post_content', $post->ID ); ?></textarea>
 			</div>
 		</div>
@@ -332,7 +352,7 @@ class WP_Content_Blocks {
 			// 'drop_element'        => null,
 			'file_data_name'      => 'ceux-upload',
 			'multiple_queues'     => false,
-			'multi_selection'	  => false,
+			// 'multi_selection'	  => false,
 			'max_file_size'       => wp_max_upload_size().'b',
 			'url'                 => admin_url('admin-ajax.php'),
 			'flash_swf_url'       => includes_url('js/plupload/plupload.flash.swf'),
@@ -348,7 +368,7 @@ class WP_Content_Blocks {
 
 			// Additional parameters:
 			'multipart_params'    => array(
-				'_ajax_nonce' => wp_create_nonce( 'photo-upload' ),
+				'_ajax_nonce' => wp_create_nonce( 'img-upload' ),
 				'action'      => 'ceux_upload_image',
 				'postID'	  => $post->ID
 			),
@@ -359,7 +379,74 @@ class WP_Content_Blocks {
 
 	}
 
+	/**
+	 * File upload handler.
+	 */
+	function cb_upload_image(){
 
+
+		// Check referer, die if no ajax:
+		check_ajax_referer( 'img-upload' );
+
+		/// Upload file using Wordpress functions:
+		$file = $_FILES['ceux-upload'];
+
+		$status = wp_handle_upload( $file, array(
+			'test_form' => true,
+			'action' => 'ceux_upload_image'
+		) );
+
+		// Fetch post ID:
+		$post_id = $_POST['postID'];
+
+		// Insert uploaded file as attachment:
+		$attach_id = wp_insert_attachment( array(
+			'post_mime_type' => $status['type'],
+			'post_title' => preg_replace( '/\.[^.]+$/', '', basename( $file['name'] ) ),
+			'post_content' => '',
+			'post_status' => 'inherit'
+		), $status['file'], $post_id );
+
+		// Include the image handler library:
+		require_once( ABSPATH . 'wp-admin/includes/image.php' );
+
+		// Generate meta data and update attachment:
+		$attach_data = wp_generate_attachment_metadata( $attach_id, $status['file'] );
+		wp_update_attachment_metadata( $attach_id, $attach_data );
+
+		// get meta data of the generated attachment
+		$data = wp_get_attachment_metadata( $attach_id );
+
+		// build our custom array for JSON response
+		$response = array(
+			'id' => $attach_id,
+			'link' => get_attachment_link( $attach_id ),
+			'sizes' => array()
+		);
+
+		foreach ( $data['sizes'] as $key => $size ) {
+
+			$url = wp_get_attachment_image_src( $attach_id, $key );
+
+			$response['sizes'][ $key ] = array(
+				'width' => $size['width'],
+				'height' => $size['height'],
+				'url' => $url[0]
+			);
+		}
+
+		// set full size
+		$full_url = wp_get_attachment_image_src( $attach_id, 'full' );
+		
+		$response['sizes']['full'] = array(
+			'width' => $data['width'],
+			'height' => $data['height'],
+			'url' => $full_url[0]
+		);
+
+		// Return response and exit:
+		wp_send_json( $response );
+	}
 }
 
 global $wp_content_blocks;
@@ -489,14 +576,48 @@ function cb_img_placeholder_tpl(){ ?>
 }
 
 function cb_gallery_tpl(){ ?>
-	<div class="wp-block drag-drop">
-		<div class="drag-drop-area supports-drag-drop">
+	<div class="wp-block drag-drop" id="wp-gallery-ui-<%= wp_id %>">
+		<div class="drag-drop-area supports-drag-drop" id="wp-drag-drop-<%= wp_id %>">
 			<h2 class="block-title"><?php _e( 'Add a Gallery' ); ?></h2>
 			<a href="#" class="open-modal">
 				<span class="dashicons dashicons-format-gallery"></span>
 				<span class="label"><?php _e( 'Drop images here or click to upload' ); ?></span>
 			</a>
 		</div>
+	</div>
+<?php
+}
+
+function cb_gallery_placeholder_tpl(){ ?>
+	<div class="wp-gallery-ui">
+		<ul id="wp-gallery-sort-<%= wp_id %>" class="wp-gallery-list columns-<%= columns %>"></ul>
+
+		<div class="wp-gallery-controls">
+			
+			<div class="wp-gallery-link-type">
+				<p><?php _e( 'Link to:' ) ?>
+				<a href="#" class="link-type<% if( link_to == 'url' ) { %> selected <% } %>" data-type="url"><span class="dashicons dashicons-admin-links"></span> <?php _e( 'Image Url' ) ?></a>
+				<a href="#" class="link-type<% if( link_to == 'page' ) { %> selected <% } %>" data-type="page"><span class="dashicons dashicons-admin-page"></span> <?php _e( 'Attachment page' ) ?></a>
+				</p>
+			</div>
+
+			<div class="wp-gallery-columns">
+				<p><?php _e( 'Number of Columns:' ) ?> <input type="number" name="wp-gallery-cols<%= wp_id %>" id="wp-gallery-cols<%= wp_id %>" class="cols-num" min="1" max="9" value="6"></p>
+			</div>
+
+			<div class="wp-gallery-more">
+				<a href="#" class="add-more"><span class="dashicons dashicons-plus"></span> <?php _e( 'Add more' ) ?></a>
+			</div>
+
+		</div>
+	</div>
+<?php
+}
+
+function cb_gallery_img_tpl(){ ?>
+	<div class="gallery-image">
+		<span class="img-remove"><span class="dashicons dashicons-no"></span></span>
+		<img src="<%= thumb.url %>" id="<%= imgID %>">		
 	</div>
 <?php
 }
